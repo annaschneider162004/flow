@@ -1,16 +1,34 @@
 # ============================================================
-# CẤU HÌNH SELECTOR CỦA FLOW.GOOGLE.COM
+# CẤU HÌNH CHROME PROFILE VÀ SELECTOR CỦA FLOW.GOOGLE.COM
 # Nếu Flow cập nhật giao diện, bạn chỉ cần sửa các selector này
 # ============================================================
+
+import os
 
 # URL trang tạo video của Flow
 FLOW_URL = "https://flow.google.com/media/generate"
 
-# Thư mục lưu profile đăng nhập để lần sau không cần nhập lại
-USER_DATA_DIR = "./flow_profile"
+# ============================================================
+# CẤU HÌNH CHROME PROFILE
+# ============================================================
+
+# Đường dẫn đến file chrome.exe trên máy Windows
+# Thường là: C:\Program Files\Google\Chrome\Application\chrome.exe
+CHROME_EXECUTABLE_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+# Thư mục User Data của Chrome
+# Thường là: C:\Users\<tên user>\AppData\Local\Google\Chrome\User Data
+CHROME_USER_DATA_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+
+# Tên profile Chrome muốn dùng
+# Ví dụ: "Default", "Profile 1", "Profile 2", ...
+CHROME_PROFILE_NAME = "Default"
 
 # Thư mục tải video về
 DOWNLOAD_DIR = "./downloads"
+
+# Profile cũ (backup, không dùng nữa nếu đã cấu hình Chrome profile ở trên)
+USER_DATA_DIR = "./flow_profile"
 
 # Các selector giao diện (có thể thay đổi nếu Flow update)
 SELECTORS = {
