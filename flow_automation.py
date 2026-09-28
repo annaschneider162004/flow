@@ -125,17 +125,19 @@ class FlowAutomation:
                     pass
                 self._cleanup_temp_profile()
 
-    def _launch_browser_with_state(self, playwright):
-        """Khởi động Chromium bình thường, load storage state để đăng nhập"""
-        self._ensure_dirs()
-
+    def _load_auth_state(self):
+        """Kiểm tra và load cookies/storage state đã export"""
         if not os.path.exists(config.AUTH_STATE_FILE):
             raise Exception(
                 f"Không tìm thấy file {config.AUTH_STATE_FILE}\n"
-                "Vui lòng bấm 'Export cookies từ Chrome' trước."
+                "Vui lòng bấm 'Export cookies từ Chrome' hoặc 'Import cookies JSON' trước."
             )
-
         self._log("📂 Đang load cookies đã export...")
+
+    def _launch_browser_with_state(self, playwright):
+        """Khởi động Chromium bình thường, load storage state để đăng nhập"""
+        self._ensure_dirs()
+        self._load_auth_state()
 
         browser = playwright.chromium.launch(
             headless=False,
@@ -155,6 +157,7 @@ class FlowAutomation:
         prompt: str,
         model: str,
         duration: str,
+        image_path: Optional[str] = None,
         progress_callback: Optional[Callable] = None
     ) -> str:
         """Tạo video và trả về đường dẫn file đã tải về"""
@@ -182,31 +185,36 @@ class FlowAutomation:
                 if self._is_login_required():
                     raise Exception(
                         "Cookies hết hiệu lực hoặc chưa đăng nhập. "
-                        "Vui lòng bấm 'Export cookies từ Chrome' lại."
+                        "Vui lòng bấm 'Export cookies từ Chrome' hoặc 'Import cookies JSON' lại."
                     )
 
+                # Upload ảnh nếu có
+                if image_path and os.path.exists(image_path):
+                    update_progress(3, 8, "🖼️ Đang upload ảnh tham chiếu...")
+                    self._upload_image(image_path)
+
                 # Nhập prompt
-                update_progress(3, 8, "✍️ Nhập prompt...")
+                update_progress(4, 8, "✍️ Nhập prompt...")
                 self._fill_prompt(prompt)
 
                 # Chọn model
-                update_progress(4, 8, f"⚙️ Chọn model: {model}...")
+                update_progress(5, 8, f"⚙️ Chọn model: {model}...")
                 self._select_model(model)
 
                 # Chọn duration
-                update_progress(5, 8, f"⏱️ Chọn thời lượng: {duration}...")
+                update_progress(6, 8, f"⏱️ Chọn thời lượng: {duration}...")
                 self._select_duration(duration)
 
                 # Click generate
-                update_progress(6, 8, "🎬 Đang tạo video (có thể mất vài phút)...")
+                update_progress(7, 8, "🎬 Đang tạo video (có thể mất vài phút)...")
                 self._click_generate()
 
                 # Chờ video xuất hiện
-                update_progress(7, 8, "⏳ Chờ video render xong...")
+                update_progress(8, 8, "⏳ Chờ video render xong...")
                 video_url = self._wait_for_video()
 
                 # Tải video về
-                update_progress(8, 8, "💾 Đang tải video về máy...")
+                update_progress(9, 9, "💾 Đang tải video về máy...")  # Bước 9/9
                 downloaded_path = self._download_video(video_url)
 
                 return downloaded_path
@@ -216,6 +224,38 @@ class FlowAutomation:
                         self.browser.close()
                 except Exception:
                     pass
+
+    def _upload_image(self, image_path: str):
+        """Upload ảnh lên Flow"""
+        abs_path = os.path.abspath(image_path)
+        if not os.path.exists(abs_path):
+            raise Exception(f"Không tìm thấy ảnh: {abs_path}")
+
+        try:
+            # Tìm input file
+            file_input = self.page.locator('input[type="file"]').first
+            if file_input.count() > 0:
+                file_input.wait_for(state="visible", timeout=10000)
+                file_input.set_input_files(abs_path)
+                self._log(f"   Đã upload ảnh: {abs_path}")
+                self.page.wait_for_timeout(1500)
+                return
+
+            # Nếu không có input file visible, thử tìm nút upload và click
+            upload_btn = self.page.locator(config.SELECTORS["upload_button"]).first
+            if upload_btn.count() > 0 and upload_btn.is_visible():
+                upload_btn.click()
+                self.page.wait_for_timeout(500)
+                file_input = self.page.locator('input[type="file"]').first
+                if file_input.count() > 0:
+                    file_input.set_input_files(abs_path)
+                    self._log(f"   Đã upload ảnh: {abs_path}")
+                    self.page.wait_for_timeout(1500)
+                    return
+
+            raise Exception("Không tìm thấy nút upload ảnh trên Flow.")
+        except Exception as e:
+            raise Exception(f"Lỗi upload ảnh: {e}")
 
     def _is_login_required(self) -> bool:
         """Phát hiện trang yêu cầu đăng nhập"""

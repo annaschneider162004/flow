@@ -43,6 +43,9 @@ SELECTORS = {
     # Dropdown chọn model / chất lượng
     "model_dropdown": 'button:has-text("Model"), button:has-text("Quality"), button:has-text("Fast")',
     
+    # Nút upload ảnh (nút có icon upload hoặc text image/upload)
+    "upload_button": 'button:has(input[type="file"]), button[aria-label*="upload" i], button:has-text("Upload"), input[type="file"]',
+    
     # Element video kết quả xuất hiện sau khi tạo xong
     "result_video": 'video, [data-test-id="generated-video"], a[href*=".mp4"], source[src*=".mp4"]',
     
@@ -66,4 +69,10 @@ AVAILABLE_DURATIONS = [
     "8s",
     "10s",
     "12s",
+]
+
+# Chế độ tạo video
+GENERATION_MODES = [
+    "text-to-video",
+    "image-to-video",
 ]
