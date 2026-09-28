@@ -1,3 +1,4 @@
+import os
 import sys
 import config
 from PyQt6.QtWidgets import (
@@ -41,14 +42,14 @@ class GenerateThread(QThread):
             self.finished_error.emit(str(e))
 
 
-class SetupLoginThread(QThread):
+class ExportCookiesThread(QThread):
     log = pyqtSignal(str)
     finished = pyqtSignal()
 
     def run(self):
         try:
             bot = FlowAutomation(log_callback=lambda msg: self.log.emit(msg))
-            bot.setup_login()
+            bot.export_cookies_from_chrome()
         except Exception as e:
             self.log.emit(f"❌ Lỗi: {e}")
         finally:
@@ -59,7 +60,7 @@ class FlowVideoApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Flow Video Generator")
-        self.setMinimumSize(700, 600)
+        self.setMinimumSize(700, 650)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -75,6 +76,12 @@ class FlowVideoApp(QMainWindow):
         subtitle = QLabel("Tự động tạo video bằng tài khoản Flow Google Ultra")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(subtitle)
+
+        # Auth status
+        self.auth_label = QLabel(self._get_auth_status_text())
+        self.auth_label.setWordWrap(True)
+        self.auth_label.setStyleSheet("padding: 8px; background-color: #f0f0f0; border-radius: 5px;")
+        self.layout.addWidget(self.auth_label)
 
         # Prompt input
         self.layout.addWidget(QLabel("📝 Prompt mô tả video:"))
@@ -112,10 +119,10 @@ class FlowVideoApp(QMainWindow):
         # Buttons
         btn_layout = QHBoxLayout()
 
-        self.login_btn = QPushButton("🔑 Đăng nhập Flow (lần đầu)")
-        self.login_btn.setStyleSheet("font-size: 14px; padding: 10px;")
-        self.login_btn.clicked.connect(self.run_setup_login)
-        btn_layout.addWidget(self.login_btn)
+        self.export_btn = QPushButton("🍪 Export cookies từ Chrome")
+        self.export_btn.setStyleSheet("font-size: 14px; padding: 10px;")
+        self.export_btn.clicked.connect(self.run_export_cookies)
+        btn_layout.addWidget(self.export_btn)
 
         self.generate_btn = QPushButton("🎬 Tạo Video")
         self.generate_btn.setStyleSheet(
@@ -133,7 +140,7 @@ class FlowVideoApp(QMainWindow):
         self.layout.addWidget(self.progress_bar)
 
         # Status label
-        self.status_label = QLabel("Sẵn sàng. Nếu chưa đăng nhập, hãy bấm 'Đăng nhập Flow' trước.")
+        self.status_label = QLabel("Sẵn sàng. Nếu chưa export cookies, hãy bấm 'Export cookies từ Chrome' trước.")
         self.status_label.setWordWrap(True)
         self.layout.addWidget(self.status_label)
 
@@ -144,9 +151,16 @@ class FlowVideoApp(QMainWindow):
         self.log_output.setMinimumHeight(150)
         self.layout.addWidget(self.log_output)
 
+    def _get_auth_status_text(self):
+        if os.path.exists(config.AUTH_STATE_FILE):
+            return f"✅ Đã có cookies: {config.AUTH_STATE_FILE}"
+        return f"⚠️ Chưa có cookies. Hãy bấm 'Export cookies từ Chrome' trước."
+
+    def update_auth_status(self):
+        self.auth_label.setText(self._get_auth_status_text())
+
     def log(self, message: str):
         self.log_output.append(message)
-        # Auto scroll
         scrollbar = self.log_output.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
@@ -156,22 +170,34 @@ class FlowVideoApp(QMainWindow):
             config.DOWNLOAD_DIR = folder
             self.folder_label.setText(f"📁 Thư mục tải về: {folder}")
 
-    def run_setup_login(self):
-        self.login_btn.setEnabled(False)
+    def run_export_cookies(self):
+        self.export_btn.setEnabled(False)
         self.generate_btn.setEnabled(False)
-        self.status_label.setText("Đang mở trình duyệt để đăng nhập...")
+        self.status_label.setText("Đang mở Chrome để export cookies...")
 
-        self.login_thread = SetupLoginThread()
-        self.login_thread.log.connect(self.log)
-        self.login_thread.finished.connect(self.on_login_finished)
-        self.login_thread.start()
+        self.export_thread = ExportCookiesThread()
+        self.export_thread.log.connect(self.log)
+        self.export_thread.finished.connect(self.on_export_finished)
+        self.export_thread.start()
 
-    def on_login_finished(self):
-        self.login_btn.setEnabled(True)
+    def on_export_finished(self):
+        self.export_btn.setEnabled(True)
         self.generate_btn.setEnabled(True)
-        self.status_label.setText("✅ Đã lưu đăng nhập. Bạn có thể tạo video ngay bây giờ.")
+        self.update_auth_status()
+        if os.path.exists(config.AUTH_STATE_FILE):
+            self.status_label.setText(f"✅ Đã export cookies: {config.AUTH_STATE_FILE}")
+        else:
+            self.status_label.setText("❌ Export cookies thất bại. Kiểm tra nhật ký.")
 
     def run_generate(self):
+        if not os.path.exists(config.AUTH_STATE_FILE):
+            QMessageBox.warning(
+                self,
+                "Chưa có cookies",
+                "Vui lòng bấm 'Export cookies từ Chrome' trước khi tạo video."
+            )
+            return
+
         prompt = self.prompt_input.toPlainText().strip()
         if not prompt:
             QMessageBox.warning(self, "Thiếu prompt", "Vui lòng nhập prompt mô tả video.")
@@ -181,7 +207,7 @@ class FlowVideoApp(QMainWindow):
         duration = self.duration_combo.currentText()
 
         self.generate_btn.setEnabled(False)
-        self.login_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
         self.progress_bar.setValue(0)
         self.status_label.setText("🚀 Đang bắt đầu tạo video...")
 
@@ -199,14 +225,14 @@ class FlowVideoApp(QMainWindow):
 
     def on_generate_success(self, filepath):
         self.generate_btn.setEnabled(True)
-        self.login_btn.setEnabled(True)
+        self.export_btn.setEnabled(True)
         self.status_label.setText(f"✅ Hoàn tất! Video lưu tại: {filepath}")
         self.log(f"🎉 Tải video thành công: {filepath}")
         QMessageBox.information(self, "Thành công", f"Video đã được lưu tại:\n{filepath}")
 
     def on_generate_error(self, error):
         self.generate_btn.setEnabled(True)
-        self.login_btn.setEnabled(True)
+        self.export_btn.setEnabled(True)
         self.status_label.setText(f"❌ Lỗi: {error}")
         self.log(f"❌ Lỗi: {error}")
         QMessageBox.critical(self, "Lỗi", f"Đã xảy ra lỗi:\n{error}")

@@ -1,6 +1,5 @@
 # ============================================================
 # CẤU HÌNH CHROME PROFILE VÀ SELECTOR CỦA FLOW.GOOGLE.COM
-# Nếu Flow cập nhật giao diện, bạn chỉ cần sửa các selector này
 # ============================================================
 
 import os
@@ -9,25 +8,25 @@ import os
 FLOW_URL = "https://flow.google.com/media/generate"
 
 # ============================================================
-# CẤU HÌNH CHROME PROFILE
+# CẤU HÌNH CHROME PROFILE (dùng để export cookies)
 # ============================================================
 
 # Đường dẫn đến file chrome.exe trên máy Windows
-# Thường là: C:\Program Files\Google\Chrome\Application\chrome.exe
 CHROME_EXECUTABLE_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
 # Thư mục User Data của Chrome
-# Thường là: C:\Users\<tên user>\AppData\Local\Google\Chrome\User Data
 CHROME_USER_DATA_DIR = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
 
-# Tên profile Chrome muốn dùng
-# Ví dụ: "Default", "Profile 1", "Profile 2", ...
+# Tên profile Chrome muốn dùng: "Default", "Profile 1", "Profile 2", ...
 CHROME_PROFILE_NAME = "Default"
+
+# File lưu cookies/storage state sau khi export
+AUTH_STATE_FILE = "flow_auth.json"
 
 # Thư mục tải video về
 DOWNLOAD_DIR = "./downloads"
 
-# Profile cũ (backup, không dùng nữa nếu đã cấu hình Chrome profile ở trên)
+# Profile cũ (backup)
 USER_DATA_DIR = "./flow_profile"
 
 # Các selector giao diện (có thể thay đổi nếu Flow update)

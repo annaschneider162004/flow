@@ -1,5 +1,7 @@
+import json
 import os
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -16,46 +18,137 @@ class FlowAutomation:
         self.context = None
         self.page = None
         self.download_path = None
+        self._temp_profile_dir = None
 
     def _log(self, message: str):
         if self.log_callback:
             self.log_callback(message)
 
     def _ensure_dirs(self):
-        Path(config.USER_DATA_DIR).mkdir(parents=True, exist_ok=True)
         Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
-    def setup_login(self):
-        """Mở trình duyệt để người dùng đăng nhập Google lần đầu"""
-        self._ensure_dirs()
+    def _get_chrome_args(self) -> list:
+        """Trả về args để launch Chrome"""
+        return [
+            "--disable-blink-features=AutomationControlled",
+            "--window-size=1400,900"
+        ]
 
-        with sync_playwright() as p:
-            self.browser = p.chromium.launch_persistent_context(
-                user_data_dir=config.USER_DATA_DIR,
-                headless=False,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--window-size=1400,900"
-                ],
-                viewport={"width": 1400, "height": 900},
-                accept_downloads=True
+    def _validate_chrome_paths(self):
+        """Kiểm tra các đường dẫn Chrome hợp lệ"""
+        if not os.path.exists(config.CHROME_EXECUTABLE_PATH):
+            raise Exception(
+                f"Không tìm thấy Chrome tại:\n{config.CHROME_EXECUTABLE_PATH}\n"
+                "Vui lòng sửa CHROME_EXECUTABLE_PATH trong config.py"
             )
 
-            self.page = self.browser.new_page()
-            self._log("🌐 Mở trang Flow để bạn đăng nhập...")
-            self.page.goto(config.FLOW_URL, wait_until="networkidle")
+        if not os.path.exists(config.CHROME_USER_DATA_DIR):
+            raise Exception(
+                f"Không tìm thấy thư mục Chrome User Data:\n{config.CHROME_USER_DATA_DIR}\n"
+                "Vui lòng sửa CHROME_USER_DATA_DIR trong config.py"
+            )
 
-            self._log("⏳ Vui lòng đăng nhập tài khoản Google có gói Flow Ultra.")
-            self._log("   Sau khi đăng nhập xong, bạn có thể đóng trình duyệt.")
+        profile_path = os.path.join(config.CHROME_USER_DATA_DIR, config.CHROME_PROFILE_NAME)
+        if not os.path.exists(profile_path):
+            raise Exception(
+                f"Không tìm thấy profile '{config.CHROME_PROFILE_NAME}' trong:\n{config.CHROME_USER_DATA_DIR}\n"
+                "Hãy kiểm tra các profile có sẵn và sửa CHROME_PROFILE_NAME trong config.py"
+            )
 
-            # Chờ người dùng tự đóng
+    def _launch_browser_with_profile(self, playwright):
+        """Khởi động Chrome với profile người dùng (dùng cho export cookies)"""
+        self._validate_chrome_paths()
+
+        chrome_path = config.CHROME_EXECUTABLE_PATH
+        profile_path = os.path.join(config.CHROME_USER_DATA_DIR, config.CHROME_PROFILE_NAME)
+
+        self._log(f"🖥️ Chrome: {chrome_path}")
+        self._log(f"👤 Profile: {config.CHROME_PROFILE_NAME} ({profile_path})")
+
+        # Copy profile sang thư mục tạm để tránh xung đột nếu Chrome đang chạy
+        self._temp_profile_dir = os.path.abspath(f"./temp_chrome_profile_{int(time.time())}")
+        self._log(f"📂 Copy profile tạm: {self._temp_profile_dir}")
+        shutil.copytree(profile_path, self._temp_profile_dir, dirs_exist_ok=True)
+
+        browser = playwright.chromium.launch(
+            executable_path=chrome_path,
+            headless=False,
+            args=self._get_chrome_args()
+        )
+
+        context = browser.new_context(
+            viewport={"width": 1400, "height": 900},
+            accept_downloads=True
+        )
+
+        return browser, context
+
+    def _cleanup_temp_profile(self):
+        """Xóa profile tạm sau khi dùng"""
+        try:
+            if self._temp_profile_dir and os.path.exists(self._temp_profile_dir):
+                shutil.rmtree(self._temp_profile_dir, ignore_errors=True)
+                self._log(f"🧹 Đã xóa profile tạm: {self._temp_profile_dir}")
+        except Exception as e:
+            self._log(f"   Không thể xóa profile tạm: {e}")
+
+    def export_cookies_from_chrome(self):
+        """Mở Chrome với profile, đợi đăng nhập, rồi lưu storage state"""
+        self._ensure_dirs()
+        self._log("🌐 Mở Chrome với profile đã cấu hình...")
+        self._log("⏳ Vui lòng đăng nhập Flow nếu cần, sau đó đóng trình duyệt.")
+        self._log("   Tool sẽ tự động export cookies khi bạn đóng.")
+
+        with sync_playwright() as p:
             try:
-                while self.page.is_closed() is False:
-                    time.sleep(1)
-            except Exception:
-                pass
+                self.browser, self.context = self._launch_browser_with_profile(p)
+                self.page = self.context.new_page()
+                self.page.goto(config.FLOW_URL, wait_until="networkidle")
 
-            self._log("✅ Đã lưu trạng thái đăng nhập.")
+                # Chờ người dùng tự đóng trang
+                try:
+                    while self.page.is_closed() is False:
+                        time.sleep(1)
+                except Exception:
+                    pass
+
+                # Lưu storage state (cookies + localStorage + sessionStorage)
+                storage_state = self.context.storage_state(path=config.AUTH_STATE_FILE)
+                cookie_count = len(storage_state.get("cookies", []))
+                self._log(f"✅ Đã export {cookie_count} cookies vào {config.AUTH_STATE_FILE}")
+
+            finally:
+                try:
+                    if self.browser:
+                        self.browser.close()
+                except Exception:
+                    pass
+                self._cleanup_temp_profile()
+
+    def _launch_browser_with_state(self, playwright):
+        """Khởi động Chromium bình thường, load storage state để đăng nhập"""
+        self._ensure_dirs()
+
+        if not os.path.exists(config.AUTH_STATE_FILE):
+            raise Exception(
+                f"Không tìm thấy file {config.AUTH_STATE_FILE}\n"
+                "Vui lòng bấm 'Export cookies từ Chrome' trước."
+            )
+
+        self._log("📂 Đang load cookies đã export...")
+
+        browser = playwright.chromium.launch(
+            headless=False,
+            args=self._get_chrome_args()
+        )
+
+        context = browser.new_context(
+            storage_state=config.AUTH_STATE_FILE,
+            viewport={"width": 1400, "height": 900},
+            accept_downloads=True
+        )
+
+        return browser, context
 
     def generate_video(
         self,
@@ -72,58 +165,57 @@ class FlowAutomation:
                 progress_callback(step, total, message)
             self._log(message)
 
-        update_progress(1, 8, "🚀 Khởi động trình duyệt...")
+        update_progress(1, 8, "🚀 Khởi động trình duyệt với cookies...")
 
         with sync_playwright() as p:
-            self.browser = p.chromium.launch_persistent_context(
-                user_data_dir=config.USER_DATA_DIR,
-                headless=False,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--window-size=1400,900"
-                ],
-                viewport={"width": 1400, "height": 900},
-                accept_downloads=True,
-                downloads_path=os.path.abspath(config.DOWNLOAD_DIR),
-            )
-            self.page = self.browser.new_page()
-
-            update_progress(2, 8, "🌐 Truy cập Flow.google.com...")
             try:
-                self.page.goto(config.FLOW_URL, wait_until="networkidle", timeout=60000)
-            except PlaywrightTimeout:
-                raise Exception("Không thể truy cập Flow.google.com. Kiểm tra kết nối mạng.")
+                self.browser, self.context = self._launch_browser_with_state(p)
+                self.page = self.context.new_page()
 
-            # Kiểm tra đã đăng nhập chưa
-            if self._is_login_required():
-                raise Exception("Chưa đăng nhập. Vui lòng bấm 'Đăng nhập Flow' trước.")
+                update_progress(2, 8, "🌐 Truy cập Flow.google.com...")
+                try:
+                    self.page.goto(config.FLOW_URL, wait_until="networkidle", timeout=60000)
+                except PlaywrightTimeout:
+                    raise Exception("Không thể truy cập Flow.google.com. Kiểm tra kết nối mạng.")
 
-            # Nhập prompt
-            update_progress(3, 8, "✍️ Nhập prompt...")
-            self._fill_prompt(prompt)
+                # Kiểm tra đã đăng nhập chưa
+                if self._is_login_required():
+                    raise Exception(
+                        "Cookies hết hiệu lực hoặc chưa đăng nhập. "
+                        "Vui lòng bấm 'Export cookies từ Chrome' lại."
+                    )
 
-            # Chọn model
-            update_progress(4, 8, f"⚙️ Chọn model: {model}...")
-            self._select_model(model)
+                # Nhập prompt
+                update_progress(3, 8, "✍️ Nhập prompt...")
+                self._fill_prompt(prompt)
 
-            # Chọn duration
-            update_progress(5, 8, f"⏱️ Chọn thời lượng: {duration}...")
-            self._select_duration(duration)
+                # Chọn model
+                update_progress(4, 8, f"⚙️ Chọn model: {model}...")
+                self._select_model(model)
 
-            # Click generate
-            update_progress(6, 8, "🎬 Đang tạo video (có thể mất vài phút)...")
-            self._click_generate()
+                # Chọn duration
+                update_progress(5, 8, f"⏱️ Chọn thời lượng: {duration}...")
+                self._select_duration(duration)
 
-            # Chờ video xuất hiện
-            update_progress(7, 8, "⏳ Chờ video render xong...")
-            video_url = self._wait_for_video()
+                # Click generate
+                update_progress(6, 8, "🎬 Đang tạo video (có thể mất vài phút)...")
+                self._click_generate()
 
-            # Tải video về
-            update_progress(8, 8, "💾 Đang tải video về máy...")
-            downloaded_path = self._download_video(video_url)
+                # Chờ video xuất hiện
+                update_progress(7, 8, "⏳ Chờ video render xong...")
+                video_url = self._wait_for_video()
 
-            self.browser.close()
-            return downloaded_path
+                # Tải video về
+                update_progress(8, 8, "💾 Đang tải video về máy...")
+                downloaded_path = self._download_video(video_url)
+
+                return downloaded_path
+            finally:
+                try:
+                    if self.browser:
+                        self.browser.close()
+                except Exception:
+                    pass
 
     def _is_login_required(self) -> bool:
         """Phát hiện trang yêu cầu đăng nhập"""
