@@ -3,6 +3,33 @@ import os
 from typing import List, Dict, Any
 
 
+def normalize_sameSite(value: Any) -> str:
+    """Chuẩn hóa giá trị sameSite cho đúng chuẩn Playwright"""
+    if value is None:
+        return "Lax"
+
+    s = str(value).strip()
+    if not s or s.lower() in ("null", "undefined", "unspecified"):
+        return "Lax"
+
+    # Chrome sử dụng "no_restriction" khi sameSite=None
+    if s.lower() in ("no_restriction", "none"):
+        return "None"
+
+    valid = {"Strict": "Strict", "Lax": "Lax", "None": "None"}
+    return valid.get(s, "Lax")
+
+
+def normalize_expires(value: Any) -> float:
+    """Chuẩn hóa giá trị expires"""
+    if value is None or value == "":
+        return -1
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return -1
+
+
 def convert_to_storage_state(cookies: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Chuyển danh sách cookies thành Playwright storage state"""
     return {
@@ -39,15 +66,19 @@ def import_cookies_from_json(json_path: str, output_path: str):
     for c in cookies:
         if not isinstance(c, dict):
             continue
+
+        sameSite_raw = c.get("sameSite", c.get("SameSite", None))
+        sameSite = normalize_sameSite(sameSite_raw)
+
         cookie = {
             "name": str(c.get("name", c.get("Name", ""))),
             "value": str(c.get("value", c.get("Value", c.get("content", "")))),
             "domain": str(c.get("domain", c.get("Domain", ""))),
             "path": str(c.get("path", c.get("Path", "/"))),
-            "expires": float(c.get("expires", c.get("Expires", -1)) or -1),
+            "expires": normalize_expires(c.get("expires", c.get("Expires", -1))),
             "httpOnly": bool(c.get("httpOnly", c.get("HttpOnly", False))),
             "secure": bool(c.get("secure", c.get("Secure", False))),
-            "sameSite": c.get("sameSite", c.get("SameSite", None)) or "Lax",
+            "sameSite": sameSite,
         }
         if cookie["name"] and cookie["domain"]:
             valid_cookies.append(cookie)
